@@ -1,33 +1,62 @@
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+import json
+from keras.models import Sequential
+from keras.layers import Dense
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.utils import to_categorical
+from keras.utils import categorical_crossentropy
+from keras.optimizers import Adam
 import numpy as np
-import keras
 
-app = FastAPI()
+# Загрузка данных и разделение на обучающую и тестовую выборки
+iris = load_iris()
+x = iris.data
+y = iris.target
 
-# Загрузка обученной модели
-model = keras.applications.fisherLab6()
+X_train, X_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+y_train = to_categorical(y_train, 3)
+y_test = to_categorical(y_test, 3)
 
-# Определение конечной точки FastAPI для обработки запросов POST
-@app.post("/classify")
-async def classify_iris(iris: str = Form(...), sepal_length: float = Form(...), sepal_width: float = Form(...), petal_length: float = Form(...), petal_width: float = Form(...)):
-    # Преобразование входных данных в массив NumPy
-    sepal_length_value = float(sepal_length)
-    sepal_width_value = float(sepal_width)
-    petal_length_value = float(petal_length)
-    petal_width_value = float(petal_width)
-    sepal_length_vector = np.array([sepal_length_value])
-    sepal_width_vector = np.array([sepal_width_value])
-    petal_length_vector = np.array([petal_length_value])
-    petal_width_vector = np.array([petal_width_value])
-    
-    # Классификация цветка с помощью обученной модели
-    prediction = model.predict([sepal_length_vector, sepal_width_vector, petal_length_vector, petal_width_vector])
-    predicted_class = np.argmax(prediction)
-    
-    # Возврат названия цветка
-    if predicted_class == 0:
-        return {"predicted_class": "setosa"}
-    elif predicted_class == 1:
-        return {"predicted_class": "versicolor"}
-    elif predicted_class == 2:
-        return {"predicted_class": "virginica"}
+# Определение модели
+model = Sequential()
+model.add(Dense(16, input_dim=4, activation='relu'))
+model.add(Dense(16, activation='relu'))
+model.add(Dense(3, activation='softmax'))
+
+# Компиляция модели
+model.compile(loss='categorical_crossentropy', optimizer=Adam(learning_rate=0.001), metrics=['accuracy'])
+
+# Обучение модели
+model.fit(X_train, y_train, epochs=65, batch_size=10, validation_data=(X_test, y_test))
+
+# Оценка модели
+scores = model.evaluate(X_test, y_test, verbose=2)
+
+# Прогнозирование классов для тестовых данных
+classes = model.predict(X_test)
+
+# Расчет точности прогнозирования
+accuration = np.sum(np.around(classes) == y_test) / (len(classes)*3)*100
+print("Точность прогнозирования: " + str(accuration) + '%')
+print("Прогноз:")
+print(np.around(classes))
+print("На самом деле:")
+print(y_test)
+print(np.around(classes) == y_test)
+
+# Определение схемы данных для предсказания
+class Prediction(BaseModel):
+    sepal_length: float
+    sepal_width: float
+    petal_length: float
+    petal_width: float
+
+# Определение маршрута для получения прогноза
+@app.post("/predict")
+async def predict(request: Request, prediction: Prediction):
+    data = prediction.dict()
+    X_test = np.array([[data['sepal_length'], data['sepal_width'], data['petal_length'], data['petal_width']]])
+    prediction = model.predict(X_test)
+    return {"prediction": np.around(prediction, 2)}
